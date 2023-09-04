@@ -2,19 +2,38 @@ import io
 import math
 import base64
 import sys
-import re
-import PIL
 from time import sleep
 from threading import Thread
 from PIL import Image
-import operator
-from collections import defaultdict
 from mcstatus import JavaServer
+
+from openpyxl import load_workbook
+from openpyxl import Workbook
+
 
 imgsize = (16,16)
 sleeptime = 0.1
-
 nullimg = b"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAaklEQVQ4T62TWw7AIAgEl/sf2qoRY4ywa1tD/JvhoRjGKUAN/RhQY1y3sKdpEltht2Z17Mmm4A3cW3AjE+yVTk4RnNqUBdGMJEE2YCpgr5MKGNymHwoUOBSo8FGw/j72J1LBDfzPMn1d5wfNZUf5qKNxAQAAAABJRU5ErkJggg=="
+threadcount = 1
+
+outputfilename = None
+
+def appenddata(ip, latency, pver, ver, cplayers, mplayers, motd, isicon):
+    book = None
+    sheet = None
+    try:
+        book = load_workbook(filename=outputfilename)
+        sheet = book.active
+    except:
+        book = Workbook()
+        sheet = book.active
+        sheet.append(("ip", "latency", "pver", "ver", "cplayers", "mplayers", "motd", "isicon"))
+
+
+    sheet.append((ip, latency, pver, ver, cplayers, mplayers, motd, isicon))
+
+    book.save(outputfilename)
+
 
 def img2ascii(icon):
 
@@ -27,42 +46,44 @@ def img2ascii(icon):
         curline = ""
         for j in range(0, imageSizeH):
             pixVal = img.getpixel((j, i))
-
-            # if len(pixVal) != 4 or pixVal[3] == 0:
-            #     symbol = "  "
-            # else:
-            #     symbol = "██"
             
             curline += (f"\033[38;2;{pixVal[0]};{pixVal[1]};{pixVal[2]}m██")
 
-
-            #curline += colored(symbol, curcolor[3])
         asciiimg.append(curline+"\033[38;2;255;255;255m > ")
     return asciiimg
 
-
-
 def scanip(ip):
+    global threadcount
+    threadcount += 1
     try:
-        #print(f"Scanning IP: {ip}")
         server = JavaServer.lookup(ip)
         status = server.status()
     except:
-        #print(f"Error: {ip}")
+        threadcount -= 1
         return False
-
-    #print(status.icon)
+        
+    isicon = None
 
     if status.icon == None:
         b64img = nullimg
+        isicon = False
     else:
         b64img = status.icon[22:]
+        isicon = True
+    
+    try: # In case an icon is invalid
+        ascii = img2ascii(b64img)
+    except:
+        ascii = img2ascii(nullimg)
+        isicon = False
 
-    ascii = img2ascii(b64img)
     ver = status.version
     players = status.players
 
     motdtxt = status.motd.to_plain()
+
+    if outputfilename != None:
+        appenddata(ip, status.latency, ver.protocol, ver.name, players.online, players.max, motdtxt, isicon)
 
     motd = ["", ""]
     if "\n" in motdtxt:
@@ -72,10 +93,12 @@ def scanip(ip):
     else:
         motd[0] = motdtxt
 
+    output = ""
     for ln in range(0,imgsize[1],1):
         line = ascii[ln]
         match ln:
             case 0:
+                print("\r\033[K", end="")
                 line += f"IP: {ip}"
             case 1:
                 line += f"Latency: {math.ceil(status.latency)}ms"
@@ -88,8 +111,11 @@ def scanip(ip):
             case 6:
                 line += f"{motd[1]}"
 
-        print(line)
-    print("\n")
+        output += f"{line}\n"
+    #with open("output.txt", "a") as file:
+    #    file.write(f"{output}\n")
+    print(f"{output}\n") # If everything isn't printed at the same time, the output text could become mixed.
+    threadcount -= 1
     return True
 
 threads = []
@@ -98,11 +124,22 @@ if sys.argv[1] == "-p":
     if not scanip(sys.argv[2]):
         print("Server not online")
 elif sys.argv[1] == "-f":
+    if sys.argv[3] == "-o":
+        outputfilename = sys.argv[4]
 
     with open(sys.argv[2]) as file:
-        for ip in file:
-            #print(f"Scanning IP: {ip}")
-            thread = Thread(target = scanip, args = (ip.strip(), ))
+        length = sum(1 for line in open(sys.argv[2]))
+        for index, ip in enumerate(file):
+
+            ip = ip.rstrip()
+
+            ipgap = ' '*(15-len(ip))
+            per = round(100*(index/length), 2)
+            pergap = ' '*(6-len(str(per)))
+            thrgap = ' '*(3-len(str(threadcount)))
+
+            print(f"Scanning IP: {ip}{ipgap} {pergap}{per}% done {thrgap} {threadcount} pending", end='\r')
+            thread = Thread(target = scanip, args = (ip, ))
             thread.start()
             threads.append(thread)
             sleep(sleeptime)
@@ -114,4 +151,5 @@ elif sys.argv[1] == "-f":
 else:
     print("Usage:\n"+\
           "srvstatus.py -p IP\n"+\
-          "srvstatus.py -f FILE")
+          "srvstatus.py -f inlist.txt\n"+\
+          "srvstatus.py -f inlist.txt -o outfile.xlsx")
