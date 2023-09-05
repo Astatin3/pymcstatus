@@ -6,5 +6,15 @@ Usage:
 Usage:
 srvstatus.py -p IP
 srvstatus.py -f inlist.txt
-srvstatus.py -f inlist.txt -o outfile.xlsx
+srvstatus.py -f inlist.txt -o outfile.json
+```
+
+Then convert json to xlsx using: 
+```
+json2xlsx.py infile.json outfile.xlsx
+```
+
+Dependencies:
+```
+Pillow mcstatus openpyxl
 ```
